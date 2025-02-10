@@ -1,13 +1,14 @@
-﻿#include <windows.h>
+﻿#define _WINSOCK_DEPRECATED_NO_WARNINGS
+
+#include <windows.h>
 #include <process.h>
 #include <mmsystem.h>
 
 #pragma comment(lib, "wsock32.lib")
 #pragma comment(lib, "winmm.lib")
 
-#include "resource.h"
 
-
+SOCKET sock;
 HWND hwMain;
 
 // 送受信する座標データ
@@ -16,14 +17,17 @@ struct POS
 	int x;
 	int y;
 };
-POS pos1P, pos2P, old_pos1P;
+POS pos1P, old_pos1P, pos2P;
 RECT rect;
+
+bool bSocket = false;
 
 // プロトタイプ宣言
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
-DWORD WINAPI Threadfunc(void*);
+DWORD WINAPI threadfunc(void*);
 
-int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_  HINSTANCE hPrevInstance, _In_ LPSTR szCmdLine, _In_ int iCmdShow) {
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
+	PSTR szCmdLine, int iCmdShow) {
 
 	MSG  msg;
 	WNDCLASS wndclass;
@@ -43,13 +47,14 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_  HINSTANCE hPrevInstance, 
 	RegisterClass(&wndclass);
 
 	// winsock初期化
-	WSAStartup(MAKEWORD(2, 0), &wdData);
+	WSAStartup(MAKEWORD(1, 1), &wdData);
 
+	// ウィンドウ作成
 	hwMain = CreateWindow("CWindow", "Client",
 		WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
 		800, 600, NULL, NULL, hInstance, NULL);
 
-	// ウインドウ表示
+	// ウィンドウ表示
 	ShowWindow(hwMain, iCmdShow);
 
 	// ウィンドウ領域更新(WM_PAINTメッセージを発行)
@@ -65,10 +70,10 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_  HINSTANCE hPrevInstance, 
 	// winsock終了
 	WSACleanup();
 
-	return 0;
+	return msg.wParam;
 }
 
-// ウインドウプロシージャ
+/* ウインドウプロシージャー */
 LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 
 	static HDC hdc, mdc, mdc2P;
@@ -76,7 +81,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 	static HBITMAP hBitmap;
 	static HBITMAP hBitmap2P;
 	static char str[256];
-
 	static HANDLE hThread;
 	static DWORD dwID;
 
@@ -85,54 +89,54 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 	case WM_CREATE:
 		// リソースからビットマップを読み込む（1P）
 		hBitmap = LoadBitmap(
-			((LPCREATESTRUCT)lParam)->hInstance, "MAJO");
-		if (hBitmap == NULL) {
-			MessageBox(hwnd, "Failed to load majo_blue.bmp", "Error", MB_OK);
-		}
-		// ディスプレイと互換性のある論理デバイス（デバイスコンテキスト）を取得（1P）
+			((LPCREATESTRUCT)lParam)->hInstance,
+			"MAJO");
+
+		// ディスプレイと互換性のある論理デバイス（デバイスコンテキスト）を取得
 		mdc = CreateCompatibleDC(NULL);
-		// 論理デバイスに読み込んだビットマップを展開（1P）
+
+		// 論理デバイスに読み込んだビットマップを展開
 		SelectObject(mdc, hBitmap);
 
 		// リソースからビットマップを読み込む（2P）
 		hBitmap2P = LoadBitmap(
-			((LPCREATESTRUCT)lParam)->hInstance, "MAJO2P");
-		if (hBitmap2P == NULL) {
-			MessageBox(hwnd, "Failed to load majo_red.bmp", "Error", MB_OK);
-		}
-		// （2P）
+			((LPCREATESTRUCT)lParam)->hInstance,
+			"MAJO2P");
+
+		// 1Pと同じ
 		mdc2P = CreateCompatibleDC(NULL);
-		// （2P）
+		// 1Pと同じ
 		SelectObject(mdc2P, hBitmap2P);
 
-		// 位置情報を初期化
 		pos1P.x = pos1P.y = 0;
 		pos2P.x = pos2P.y = 100;
+
 		// データを送受信処理をスレッド（WinMainの流れに関係なく動作する処理の流れ）として生成。
 		// データ送受信をスレッドにしないと何かデータを受信するまでRECV関数で止まってしまう。
-		hThread = (HANDLE)CreateThread(NULL, 0, Threadfunc, (LPVOID)&pos2P, 0, &dwID);
-		break;
+		hThread = (HANDLE)CreateThread(NULL, 0, &threadfunc, NULL, 0, &dwID);
+
+		return 0;
 	case WM_KEYDOWN:
 		switch (wParam) {
 		case VK_ESCAPE:
 			SendMessage(hwnd, WM_CLOSE, NULL, NULL);
 			break;
 		case VK_RIGHT:
-			pos2P.x += 5;
+			if (pos2P.x < 750) pos2P.x += 10;
 			break;
 		case VK_LEFT:
-			pos2P.x -= 5;
+			if (pos2P.x > 0) pos2P.x -= 10;
 			break;
 		case VK_DOWN:
-			pos2P.y += 5;
+			if (pos2P.y < 520) pos2P.y += 10;
 			break;
 		case VK_UP:
-			pos2P.y -= 5;
+			if (pos2P.y > 0) pos2P.y -= 10;
 			break;
 		}
 
-		// 指定ウィンドウの指定矩形領域を更新領域に追加
-		// hWnd	 ：ウインドウのハンドル
+		// ウィンドウを更新領域に追加
+		// hWnd	 ：	ウインドウのハンドル
 		// lprec ：RECTのポインタ．NULLなら全体
 		// bErase：TRUEなら更新領域を背景色で初期化， FALSEなら現在の状態から上書き描画
 		// 返り値：成功すればTRUE，それ以外はFALSE
@@ -147,24 +151,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 
 		// 転送元デバイスコンテキストから転送先デバイスコンテキストへ
 		// 長方形カラーデータのビットブロックを転送
-		// サーバ側キャラ描画
 		BitBlt(hdc, pos1P.x, pos1P.y, 32, 32, mdc, 0, 0, SRCCOPY);
-		// クライアント側キャラ描画
 		BitBlt(hdc, pos2P.x, pos2P.y, 32, 32, mdc2P, 0, 0, SRCCOPY);
 
-		wsprintf(str, "サーバ側：X:%d Y:%d　　クライアント側：X:%d Y:%d", pos1P.x, pos1P.y, pos2P.x, pos2P.y);
+		wsprintf(str, "X:%d Y:%d", pos2P.x, pos2P.y);
 		SetWindowText(hwMain, str);
 
 		// 更新領域を空にする
 		EndPaint(hwnd, &ps);
 		return 0;
 
+		// ウインドウ破棄時
 	case WM_DESTROY:
-		/* ウインドウ破棄時 */
 		DeleteObject(hBitmap);
 		DeleteDC(mdc);
 		DeleteObject(hBitmap2P);
 		DeleteDC(mdc2P);
+
+		// ソケット作られていたら開放
+		if (bSocket) {
+			shutdown(sock, 2);
+			closesocket(sock);
+		}
 
 		PostQuitMessage(0);
 
@@ -175,56 +183,43 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 }
 
 /* 通信スレッド関数 */
-DWORD WINAPI Threadfunc(void* px) {
+DWORD WINAPI threadfunc(void*) {
 
-	SOCKET sConnect;
-	WORD wPort = 8000;
-	SOCKADDR_IN saConnect;
-	int iLen, iRecv;
-	char szServer[1024] = { "192.168.3.4" };
+	int recv_cnt;
+	int send_cnt;
+	int fromlen;
+	struct sockaddr_in send_addr, recv_addr;
 
-	// ソケットをオープン
-	sConnect = socket(PF_INET, SOCK_STREAM, 0);
 
-	if (sConnect == INVALID_SOCKET) {
-		SetWindowText(hwMain, "ソケットオープンエラー");
-		return 1;
-	}
+	sock = socket(PF_INET, SOCK_DGRAM, 0);
+	
+	ZeroMemory(&send_addr, sizeof(sockaddr_in));
+	ZeroMemory(&recv_addr, sizeof(sockaddr_in));
 
-	// サーバーを名前で取得する
-	HOSTENT* lpHost;
-
-	lpHost = gethostbyname(szServer);
-
-	if (lpHost == NULL) {
-		/* サーバーをIPアドレスで取得する */
-		iLen = inet_addr(szServer);
-		lpHost = gethostbyaddr((char*)&iLen, 4, AF_INET);
-	}
-
-	// クライアントソケットをサーバーに接続
-	memset(&saConnect, 0, sizeof(SOCKADDR_IN));
-	saConnect.sin_family = lpHost->h_addrtype;
-	saConnect.sin_port = htons(wPort);
-	saConnect.sin_addr.s_addr = *((u_long*)lpHost->h_addr);
-
-	if (connect(sConnect, (SOCKADDR*)&saConnect, sizeof(saConnect)) == SOCKET_ERROR) {
-		SetWindowText(hwMain, "サーバーと接続できませんでした");
-		closesocket(sConnect);
-		return 1;
-	}
-
-	SetWindowText(hwMain, "サーバーに接続できました");
-
-	iRecv = 0;
+	// ソケットにポート番号と送信先IPアドレスを設定
+	send_addr.sin_family = AF_INET;
+	send_addr.sin_port = htons(8000);
+	send_addr.sin_addr.s_addr = inet_addr("192.168.3.4");
 
 	while (1)
 	{
-		// クライアント側キャラの位置情報を送信
-		send(sConnect, (const char*)&pos2P, sizeof(POS), 0);
+		recv_cnt = 0;
+		send_cnt = 0;
+		fromlen = sizeof(recv_addr);
 
-		// 受信したクライアントが操作するキャラの座標が更新されていたら
-		// 更新領域を作ってInvalidateRect関数でWM_PAINTメッセージを発行、キャラを再描画する
+		// 送られてくる1Pの座標情報を退避
+		old_pos1P = pos1P;
+
+		//データ送信
+		while (send_cnt == 0)
+		{
+			send_cnt = sendto(sock, (const char*)&pos2P, sizeof(POS), 0, (struct sockaddr*)&send_addr, sizeof(send_addr));
+		}
+
+		recv_cnt = recvfrom(sock, (char*)&pos1P, sizeof(POS), 0, (struct sockaddr*)&recv_addr, &fromlen);
+
+		// 受信したサーバが操作するキャラの座標が更新されていたら、更新領域を作って
+		// InvalidateRect関数でWM_PAINTメッセージを発行、キャラを再描画する
 		if (old_pos1P.x != pos1P.x || old_pos1P.y != pos1P.y)
 		{
 			rect.left = old_pos1P.x - 10;
@@ -233,20 +228,7 @@ DWORD WINAPI Threadfunc(void* px) {
 			rect.bottom = old_pos1P.y + 42;
 			InvalidateRect(hwMain, &rect, TRUE);
 		}
-
-		int nRcv;
-
-		old_pos1P = pos1P;
-
-		// サーバ側キャラの位置情報を受け取り
-		nRcv = recv(sConnect, (char*)&pos1P, sizeof(POS), 0);
-
-		if (nRcv == SOCKET_ERROR)break;
-
 	}
-
-	shutdown(sConnect, 2);
-	closesocket(sConnect);
 
 	return 0;
 }
