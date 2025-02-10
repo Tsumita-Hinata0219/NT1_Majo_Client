@@ -5,6 +5,8 @@
 #pragma comment(lib, "wsock32.lib")
 #pragma comment(lib, "winmm.lib")
 
+#include "resource.h"
+
 
 HWND hwMain;
 
@@ -108,7 +110,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 		pos2P.x = pos2P.y = 100;
 		// データを送受信処理をスレッド（WinMainの流れに関係なく動作する処理の流れ）として生成。
 		// データ送受信をスレッドにしないと何かデータを受信するまでRECV関数で止まってしまう。
-		hThread = (HANDLE)CreateThread(NULL, 0, /*☆*/, (LPVOID)&pos2P, 0, &dwID);
+		hThread = (HANDLE)CreateThread(NULL, 0, Threadfunc, (LPVOID)&pos2P, 0, &dwID);
 		break;
 	case WM_KEYDOWN:
 		switch (wParam) {
@@ -116,16 +118,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 			SendMessage(hwnd, WM_CLOSE, NULL, NULL);
 			break;
 		case VK_RIGHT:
-			//☆　→キー押されたらクライアント側キャラのX座標を更新
+			pos2P.x += 5;
 			break;
 		case VK_LEFT:
-			//☆　←キー押されたらクライアント側キャラのX座標を更新
+			pos2P.x -= 5;
 			break;
 		case VK_DOWN:
-			//☆　↓キー押されたらクライアント側キャラのY座標を更新
+			pos2P.y += 5;
 			break;
 		case VK_UP:
-			//☆　↑キー押されたらクライアント側キャラのY座標を更新
+			pos2P.y -= 5;
 			break;
 		}
 
@@ -179,10 +181,10 @@ DWORD WINAPI Threadfunc(void* px) {
 	WORD wPort = 8000;
 	SOCKADDR_IN saConnect;
 	int iLen, iRecv;
-	char szServer[1024] = { "自分PCのIPアドレス" };
+	char szServer[1024] = { "192.168.3.4" };
 
 	// ソケットをオープン
-	sConnect = socket(/*☆*/, /*☆*/, 0);
+	sConnect = socket(PF_INET, SOCK_STREAM, 0);
 
 	if (sConnect == INVALID_SOCKET) {
 		SetWindowText(hwMain, "ソケットオープンエラー");
@@ -203,7 +205,7 @@ DWORD WINAPI Threadfunc(void* px) {
 	// クライアントソケットをサーバーに接続
 	memset(&saConnect, 0, sizeof(SOCKADDR_IN));
 	saConnect.sin_family = lpHost->h_addrtype;
-	saConnect.sin_port = htons(htons(/*☆*/);
+	saConnect.sin_port = htons(wPort);
 	saConnect.sin_addr.s_addr = *((u_long*)lpHost->h_addr);
 
 	if (connect(sConnect, (SOCKADDR*)&saConnect, sizeof(saConnect)) == SOCKET_ERROR) {
@@ -219,7 +221,7 @@ DWORD WINAPI Threadfunc(void* px) {
 	while (1)
 	{
 		// クライアント側キャラの位置情報を送信
-		send(/*☆*/, (const char*)/*☆*/, sizeof(POS), 0);
+		send(sConnect, (const char*)&pos2P, sizeof(POS), 0);
 
 		// 受信したクライアントが操作するキャラの座標が更新されていたら
 		// 更新領域を作ってInvalidateRect関数でWM_PAINTメッセージを発行、キャラを再描画する
@@ -237,7 +239,7 @@ DWORD WINAPI Threadfunc(void* px) {
 		old_pos1P = pos1P;
 
 		// サーバ側キャラの位置情報を受け取り
-		nRcv = recv(/*☆*/, (char*)/*☆*/, sizeof(POS), 0);
+		nRcv = recv(sConnect, (char*)&pos1P, sizeof(POS), 0);
 
 		if (nRcv == SOCKET_ERROR)break;
 
